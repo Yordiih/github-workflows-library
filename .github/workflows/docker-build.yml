@@ -1,0 +1,62 @@
+name: Docker build and scan
+
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        description: Local image name used for the build and the scan
+        type: string
+        required: true
+      dockerfile:
+        description: Path to the Dockerfile
+        type: string
+        required: true
+      context:
+        description: Docker build context
+        type: string
+        default: "."
+      severity:
+        description: Trivy severities that count as findings
+        type: string
+        default: "CRITICAL,HIGH"
+      fail-on-findings:
+        description: Fail the job when Trivy finds vulnerabilities
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-scan:
+    name: ${{ inputs.image-name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Build image
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          load: true
+          push: false
+          tags: ${{ inputs.image-name }}:ci
+          cache-from: type=gha,scope=${{ inputs.image-name }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.image-name }}
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          image-ref: ${{ inputs.image-name }}:ci
+          format: table
+          severity: ${{ inputs.severity }}
+          ignore-unfixed: true
+          exit-code: ${{ inputs.fail-on-findings && '1' || '0' }}

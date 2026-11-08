@@ -1,0 +1,75 @@
+name: Node CI
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: Node.js version used to build and test
+        type: string
+        default: "22"
+      workspace:
+        description: npm workspace to build and test (for example apps/api). Empty means the repository root.
+        type: string
+        default: ""
+      needs-mongo:
+        description: Start a throwaway MongoDB 7 container for the tests
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: ${{ inputs.workspace || 'root' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start MongoDB
+        if: inputs.needs-mongo
+        run: |
+          docker run -d --name ci-mongo -p 27017:27017 mongo:7
+          for _ in $(seq 1 30); do
+            if docker exec ci-mongo mongosh --quiet --eval 'db.runCommand({ ping: 1 })' > /dev/null 2>&1; then
+              echo "MongoDB is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "MongoDB did not become ready" >&2
+          exit 1
+
+      - name: Build
+        env:
+          WORKSPACE: ${{ inputs.workspace }}
+        run: |
+          if [ -n "$WORKSPACE" ]; then
+            npm run build --if-present -w "$WORKSPACE"
+          else
+            npm run build --if-present
+          fi
+
+      - name: Test
+        env:
+          WORKSPACE: ${{ inputs.workspace }}
+          MONGO_URI_TEST: mongodb://localhost:27017/uptime-test
+        run: |
+          if [ -n "$WORKSPACE" ]; then
+            npm run test --if-present -w "$WORKSPACE"
+          else
+            npm test --if-present
+          fi
